@@ -108,12 +108,20 @@ for c in ['NAV', 'Lãi lỗ sau cùng', 'Dư nợ hiện tại', 'Giá trị dan
 max_vals = {c: nav_daily[c].max() for c in ['NAV', 'Lãi lỗ sau cùng', 'Dư nợ hiện tại', 'Giá trị danh mục', 'Tỉ lệ']}
 
 gb = GridOptionsBuilder.from_dataframe(nav_daily)
-gb.configure_default_column(editable=False, resizable=True, filter=True, cellStyle={'textAlign': 'center'})
-gb.configure_column('Khách hàng', pinned='left', width=160, cellStyle={'textAlign': 'center'})
+gb.configure_default_column(editable=False, resizable=True, filter=True, headerClass='center-header')
+
+# Header căn giữa
+center_header = JsCode("""
+function(params) {
+    return {'textAlign': 'center', 'fontWeight': 'bold'};
+}
+""")
+
+gb.configure_column('Khách hàng', pinned='left', width=160, cellStyle={'textAlign': 'center'}, headerClass='center-header')
 
 for col in ['NAV', 'Lãi lỗ sau cùng', 'Dư nợ hiện tại', 'Giá trị danh mục', 'Tỉ lệ']:
     js_style = JsCode(js_highlight_max.format(max_val=max_vals[col]))
-    gb.configure_column(col, cellRenderer=js_number_right, cellStyle=js_style, width=140)
+    gb.configure_column(col, cellRenderer=js_number_right, cellStyle=js_style, width=140, headerClass='center-header')
 
 st.header("📈 NAV ngày")
 AgGrid(nav_daily, gridOptions=gb.build(), fit_columns_on_grid_load=True, height=450, theme='streamlit', allow_unsafe_jscode=True)
@@ -131,59 +139,17 @@ from key_in where on_off='ON' and so_luong_mua !=0 and length(ma)=3
 df2 = conn.execute(query2).fetchdf()
 
 pivot = pd.pivot_table(df2, values='so_luong_mua', index='khach_hang', columns='ma', aggfunc='sum', fill_value=0)
-pivot['Tổng'] = pivot.sum(axis=1)
-pivot = pivot.sort_values(by='Tổng', ascending=False)
+# Thêm dòng tổng theo cột
+pivot.loc['Tổng'] = pivot.sum(axis=0)
+
 pivot = pivot.reset_index().rename(columns={'khach_hang': 'Khách hàng'})
 
 gb2 = GridOptionsBuilder.from_dataframe(pivot)
-gb2.configure_default_column(cellStyle={'textAlign': 'right'}, resizable=True)
-gb2.configure_column('Khách hàng', pinned='left', cellStyle={'textAlign': 'center'})
+gb2.configure_default_column(cellStyle={'textAlign': 'right'}, resizable=True, headerClass='center-header')
+gb2.configure_column('Khách hàng', pinned='left', cellStyle={'textAlign': 'center'}, headerClass='center-header')
 
 for col in pivot.columns:
     if col != 'Khách hàng':
         gb2.configure_column(col, cellRenderer=js_number_right, min_width=100)
 
 AgGrid(pivot, gridOptions=gb2.build(), fit_columns_on_grid_load=True, height=550, theme='streamlit', allow_unsafe_jscode=True)
-
-# ===========================
-# 7️⃣ LÃI VAY THEO NGÀY
-# ===========================
-st.markdown("<br>", unsafe_allow_html=True)
-st.header("💰 Lãi vay theo ngày")
-
-query3 = "select khach_hang, ngay, lai_vay_ngay from NAV_batch"
-lai = conn.execute(query3).fetchdf()
-
-pivot3 = pd.pivot_table(lai, values='lai_vay_ngay', index='khach_hang', columns='ngay', aggfunc='sum', fill_value=0)
-pivot3 = pivot3.sort_index(axis=1)
-
-# Tổng và diff
-pivot3['Tổng'] = pivot3.sum(axis=1)
-pivot3 = pivot3.sort_values('Tổng', ascending=False)
-pivot3 = pivot3.drop(columns='Tổng')
-
-cols = [d.strftime('%d/%m/%Y') for d in pivot3.columns]
-pivot3.columns = cols
-pivot3.reset_index(inplace=True)
-pivot3.rename(columns={'khach_hang': 'Khách hàng'}, inplace=True)
-
-gb3 = GridOptionsBuilder.from_dataframe(pivot3)
-gb3.configure_default_column(cellStyle={'textAlign': 'right'}, resizable=True)
-gb3.configure_column('Khách hàng', pinned='left', min_width=180, cellStyle={'textAlign': 'center'})
-
-for c in pivot3.columns:
-    if c != 'Khách hàng':
-        gb3.configure_column(c, cellRenderer=js_number_right, min_width=110)
-
-AgGrid(pivot3, gridOptions=gb3.build(), fit_columns_on_grid_load=False, theme='streamlit', height=600, allow_unsafe_jscode=True)
-
-# ===========================
-# 8️⃣ TỔNG LÃI VAY
-# ===========================
-st.markdown("<br>", unsafe_allow_html=True)
-st.header("📊 Tổng lãi vay theo ngày")
-
-query4 = "select ngay, sum(lai_vay_ngay) as tong from NAV_batch group by ngay order by ngay"
-tong = conn.execute(query4).fetchdf().set_index('ngay')
-
-st.line_chart(tong['tong'])
