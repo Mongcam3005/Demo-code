@@ -1,45 +1,31 @@
 import pandas as pd
-import streamlit as st 
+import streamlit as st
 import duckdb
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 
-st.set_page_config(layout="wide")
+# ===========================
+# 1️⃣ SETUP TRANG
+# ===========================
+st.set_page_config(layout="wide", page_title="🧮 Dashboard Khách hàng")
 
 conn = duckdb.connect(':memory:')
 
+# ===========================
+# 2️⃣ IMPORT DATA
+# ===========================
 sheet_id = "1N5Len0S4vxZrzksnZJDImF6rK6--G8YEMPLbbYmmKvs"
 
 gid1 = "1961129161"
 url1 = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid1}"
-
-key_in = pd.read_csv(
-    url1,
-    skiprows=1,
-    header = 0,
-    usecols= range(36)
-)
-
-# gid2 = "1005669772"
-# url2 = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid2}"
-
-# ttkh = pd.read_csv(
-#     url2,
-#     skiprows=0,
-#     header = 0,
-#     usecols= range(3)
-# )
+key_in = pd.read_csv(url1, skiprows=1, header=0, usecols=range(36))
 
 gid3 = "782116804"
 url3 = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid3}"
+NAV_batch = pd.read_csv(url3, skiprows=0, header=0, usecols=range(7))
 
-NAV_batch = pd.read_csv(
-    url3,
-    skiprows=0,
-    header = 0,
-    usecols= range(7)
-)
-
-# Đổi tên cột
+# ===========================
+# 3️⃣ ĐỔI TÊN CỘT & KIỂU DỮ LIỆU
+# ===========================
 key_in.columns.values[1] = "khach_hang"
 key_in.columns.values[6] = "ma"
 key_in.columns.values[8] = "so_luong_mua"
@@ -47,364 +33,157 @@ key_in.columns.values[10] = "on_off"
 key_in.columns.values[18] = "tien_ban_phi"
 key_in.columns.values[20] = "du_no_hien_tai"
 key_in.columns.values[24] = "lai_lo_sau_cung"
+
 NAV_batch.columns.values[0] = "khach_hang"
 NAV_batch.columns.values[5] = "lai_vay_ngay"
 NAV_batch.columns.values[6] = "ngay"
 
+cols_num = ['du_no_hien_tai', 'so_luong_mua', 'lai_lo_sau_cung', 'tien_ban_phi', 'NAV']
+key_in[cols_num] = key_in[cols_num].replace(',', '', regex=True).apply(pd.to_numeric, errors='coerce')
 
-# Chuyển các cột về dạng số
-cols_can_chuyen = ['du_no_hien_tai', 'so_luong_mua','lai_lo_sau_cung','tien_ban_phi','NAV']
-key_in[cols_can_chuyen] = key_in[cols_can_chuyen].replace(',', '', regex=True).apply(pd.to_numeric, errors='raise')
 NAV_batch['lai_vay_ngay'] = pd.to_numeric(
     NAV_batch['lai_vay_ngay'].astype(str).str.replace(',', '', regex=False),
-    errors='coerce')
+    errors='coerce'
+)
+NAV_batch['ngay'] = pd.to_datetime(NAV_batch['ngay'], errors='coerce')
 
-# Chuyển các cột về dạng ngày tháng
-NAV_batch['ngay'] = pd.to_datetime(NAV_batch['ngay'],errors='coerce')
+conn.register('key_in', key_in)
+conn.register('NAV_batch', NAV_batch)
 
-# Tạo bảng key in, NAV batch
-conn.register('key_in',key_in)
-conn.register('NAV_batch',NAV_batch)
+# ===========================
+# 4️⃣ STYLE DÙNG CHUNG
+# ===========================
+js_number_right = JsCode("""
+function(params) {
+    if (params.value === 0 || params.value === null || params.value === undefined || params.value === '') return '';
+    if (typeof params.value === 'string') {
+        let num = Number(params.value.replace(/,/g, ''));
+        if (!isNaN(num)) return num.toLocaleString('vi-VN');
+    }
+    if (typeof params.value === 'number') return params.value.toLocaleString('vi-VN');
+    return params.value;
+}
+""")
 
-# ----------------------
+js_highlight_max = """
+function(params) {{
+  if (params.value === {max_val}) {{
+    return {{ backgroundColor: 'lightgreen', textAlign: 'right' }};
+  }}
+  return {{ textAlign: 'right' }};
+}}
+"""
 
+# ===========================
+# 5️⃣ NAV NGÀY
+# ===========================
+st.title("🧮 Dashboard Khách hàng")
+st.markdown("<br>", unsafe_allow_html=True)
 
-# Streamlit UI
-st.title('🧮 Dashboard Khách hàng')
-st.markdown("<br><br>", unsafe_allow_html=True)
-
-# ---------------------------
-
-# 1.NAV NGÀY
-
-# Tạo bảng NAV real time
-query1 ='''
+query1 = '''
 select a.*, 
 b.lai_lo_sau_cung, 
 b.du_no_hien_tai,
 b.gia_tri_danh_muc,
-case 
-    when a.NAV is null or b.gia_tri_danh_muc is null then null 
-    when b.gia_tri_danh_muc = 0 then null
-    else a.NAV/b.gia_tri_danh_muc 
-end as ti_le
-from
-    (select khach_hang, sum(NAV) as NAV
-        from key_in
-    where khach_hang is not null
-    group by khach_hang) a
-left join
-    (select khach_hang, 
-        sum(lai_lo_sau_cung) as lai_lo_sau_cung,
-        sum(du_no_hien_tai) as du_no_hien_tai,
-        sum(tien_ban_phi) as gia_tri_danh_muc
-        from key_in
-    where on_off = 'ON'
-    group by khach_hang) b
-on a.khach_hang = b.khach_hang
+case when b.gia_tri_danh_muc = 0 then null
+     else a.NAV/b.gia_tri_danh_muc end as ti_le
+from (select khach_hang, sum(NAV) as NAV from key_in group by khach_hang) a
+left join (select khach_hang, sum(lai_lo_sau_cung) as lai_lo_sau_cung, sum(du_no_hien_tai) as du_no_hien_tai,
+sum(tien_ban_phi) as gia_tri_danh_muc from key_in where on_off='ON' group by khach_hang) b
+on a.khach_hang=b.khach_hang
 '''
 nav_daily = conn.execute(query1).fetchdf()
 
-nav_daily_renamed = nav_daily.rename(columns={
-    'khach_hang' : 'Khách hàng',
+nav_daily = nav_daily.rename(columns={
+    'khach_hang': 'Khách hàng',
     'lai_lo_sau_cung': 'Lãi lỗ sau cùng',
     'du_no_hien_tai': 'Dư nợ hiện tại',
     'gia_tri_danh_muc': 'Giá trị danh mục',
     'ti_le': 'Tỉ lệ'
 })
 
-nav_daily_renamed = nav_daily_renamed.replace([None, pd.NA, "None"], 0)  # Handle None and pd.NA
-nav_daily_renamed = nav_daily_renamed.fillna(0)  # Handle NaN
+for c in ['NAV', 'Lãi lỗ sau cùng', 'Dư nợ hiện tại', 'Giá trị danh mục', 'Tỉ lệ']:
+    nav_daily[c] = pd.to_numeric(nav_daily[c], errors='coerce').fillna(0)
 
-# Convert specified columns to numeric, coercing errors to NaN
-numeric_columns = ['NAV', 'Lãi lỗ sau cùng', 'Dư nợ hiện tại', 'Giá trị danh mục', 'Tỉ lệ']
-for col in numeric_columns:
-    nav_daily_renamed[col] = pd.to_numeric(nav_daily_renamed[col], errors='coerce').fillna(0)
+max_vals = {c: nav_daily[c].max() for c in ['NAV', 'Lãi lỗ sau cùng', 'Dư nợ hiện tại', 'Giá trị danh mục', 'Tỉ lệ']}
 
-max_values = {col: nav_daily_renamed[col].max() for col in numeric_columns}
+gb = GridOptionsBuilder.from_dataframe(nav_daily)
+gb.configure_default_column(editable=False, resizable=True, filter=True, cellStyle={'textAlign': 'center'})
+gb.configure_column('Khách hàng', pinned='left', width=160, cellStyle={'textAlign': 'center'})
 
-format_numeric = JsCode("""
-function(params) {
-    if (params.value === 0 || params.value === null) return '';
-    if (params.colDef.field === 'Tỉ lệ') {
-        return (params.value * 100).toFixed(2) + '%';
-    }
-    return params.value.toLocaleString();
-}
-""")
+for col in ['NAV', 'Lãi lỗ sau cùng', 'Dư nợ hiện tại', 'Giá trị danh mục', 'Tỉ lệ']:
+    js_style = JsCode(js_highlight_max.format(max_val=max_vals[col]))
+    gb.configure_column(col, cellRenderer=js_number_right, cellStyle=js_style, width=140)
 
-highlight_max_template = """
-function(params) {{
-    if (params.value === {max_val}) {{
-        return {{
-            'backgroundColor': 'lightgreen',
-            'textAlign': 'center'
-        }};
-    }}
-    return {{
-        'textAlign': 'center'
-    }};
-}}
-"""
+st.header("📈 NAV ngày")
+AgGrid(nav_daily, gridOptions=gb.build(), fit_columns_on_grid_load=True, height=450, theme='streamlit', allow_unsafe_jscode=True)
 
-gb = GridOptionsBuilder.from_dataframe(nav_daily_renamed)
-gb.configure_default_column(
-    editable=False,
-    filter=True,
-    resizable=True,
-    cellStyle={'textAlign': 'center'}  # mặc định căn trái
-)
-gb.configure_column('Khách hàng', pinned='center', width=150)
+# ===========================
+# 6️⃣ SỐ LƯỢNG MUA
+# ===========================
+st.markdown("<br>", unsafe_allow_html=True)
+st.header("🛒 Số lượng mua")
 
-for col in numeric_columns:
-    cellStyle_js = JsCode(highlight_max_template.format(max_val=max_values[col]))
-    gb.configure_column(
-        col,
-        cellRenderer=format_numeric,
-        cellStyle=cellStyle_js,  # đã có căn trái trong JS
-        width=130,
-    )
-
-grid_options = gb.build()
-
-row_height = 30.5
-num_rows = len(nav_daily_renamed)
-table_height = row_height * num_rows -20
-
-st.header('📈 NAV ngày')
-AgGrid(
-    nav_daily_renamed,
-    gridOptions=grid_options,
-    height=table_height,
-    enable_enterprise_modules=False,
-    fit_columns_on_grid_load=True,
-    theme='streamlit',
-    allow_unsafe_jscode=True
-)
-
-
-
-
-# ---------------------
-st.markdown("<br><br>", unsafe_allow_html=True)
-# ---------------------------
-
-
-# 2.SỐ LƯỢNG MUA
-
-# Tạo bảng checkend day
 query2 = '''
 select khach_hang, ma, so_luong_mua
-from key_in
-where length(ma) = 3
-and on_off = 'ON'
-and khach_hang is not null
-and so_luong_mua != 0
+from key_in where on_off='ON' and so_luong_mua !=0 and length(ma)=3
 '''
-checkend_day = conn.execute(query2).fetchdf()
+df2 = conn.execute(query2).fetchdf()
 
-# Tạo pivot table với tổng (margins=True)
-pivot = pd.pivot_table(
-    checkend_day,
-    values='so_luong_mua',
-    index='khach_hang',
-    columns='ma',
-    aggfunc='sum',
-    fill_value=None,
-    margins=True,
-    margins_name='Tong'
-)
+pivot = pd.pivot_table(df2, values='so_luong_mua', index='khach_hang', columns='ma', aggfunc='sum', fill_value=0)
+pivot['Tổng'] = pivot.sum(axis=1)
+pivot = pivot.sort_values(by='Tổng', ascending=False)
+pivot = pivot.reset_index().rename(columns={'khach_hang': 'Khách hàng'})
 
-#Sắp xếp rows theo tổng mua giảm dần
-pivot_no_total = pivot.drop('Tong')
-sorted_rows = pivot_no_total.sort_values(by='Tong', ascending=False).index
+gb2 = GridOptionsBuilder.from_dataframe(pivot)
+gb2.configure_default_column(cellStyle={'textAlign': 'right'}, resizable=True)
+gb2.configure_column('Khách hàng', pinned='left', cellStyle={'textAlign': 'center'})
 
-#Sắp xếp columns theo tổng giảm dần
-total_row = pivot.loc['Tong'].drop('Tong')
-sorted_columns = total_row.sort_values(ascending=False).index
+for col in pivot.columns:
+    if col != 'Khách hàng':
+        gb2.configure_column(col, cellRenderer=js_number_right, min_width=100)
 
-#Reindex lại bảng
-sorted_pivot = pivot.reindex(
-    index=list(sorted_rows) + ['Tong'],
-    columns=list(sorted_columns)
-)
+AgGrid(pivot, gridOptions=gb2.build(), fit_columns_on_grid_load=True, height=550, theme='streamlit', allow_unsafe_jscode=True)
 
-#Xử lý: thay số 0 hoặc NaN bằng chuỗi trống "", format số có dấu phẩy
-def format_cell(val):
-    if pd.isna(val) or val == 0:
-        return ""
-    else:
-        return f"{val:,.0f}"
+# ===========================
+# 7️⃣ LÃI VAY THEO NGÀY
+# ===========================
+st.markdown("<br>", unsafe_allow_html=True)
+st.header("💰 Lãi vay theo ngày")
 
-formatted_pivot = sorted_pivot.applymap(format_cell)
+query3 = "select khach_hang, ngay, lai_vay_ngay from NAV_batch"
+lai = conn.execute(query3).fetchdf()
 
-st.header('🛒 Số lượng mua')
+pivot3 = pd.pivot_table(lai, values='lai_vay_ngay', index='khach_hang', columns='ngay', aggfunc='sum', fill_value=0)
+pivot3 = pivot3.sort_index(axis=1)
 
-st.dataframe(formatted_pivot, height=600)
+# Tổng và diff
+pivot3['Tổng'] = pivot3.sum(axis=1)
+pivot3 = pivot3.sort_values('Tổng', ascending=False)
+pivot3 = pivot3.drop(columns='Tổng')
 
-# -------------------------
-st.markdown("<br><br>", unsafe_allow_html=True)
-# --------------------------------
+cols = [d.strftime('%d/%m/%Y') for d in pivot3.columns]
+pivot3.columns = cols
+pivot3.reset_index(inplace=True)
+pivot3.rename(columns={'khach_hang': 'Khách hàng'}, inplace=True)
 
+gb3 = GridOptionsBuilder.from_dataframe(pivot3)
+gb3.configure_default_column(cellStyle={'textAlign': 'right'}, resizable=True)
+gb3.configure_column('Khách hàng', pinned='left', min_width=180, cellStyle={'textAlign': 'center'})
 
-# 3.LÃI VAY THEO NGÀY
+for c in pivot3.columns:
+    if c != 'Khách hàng':
+        gb3.configure_column(c, cellRenderer=js_number_right, min_width=110)
 
-# Tạo bảng lãi vay theo ngày
-query3 = '''
-select khach_hang,
-    ngay,
-    lai_vay_ngay
-from NAV_batch
-'''
-lai_ngay = conn.execute(query3).fetchdf()
+AgGrid(pivot3, gridOptions=gb3.build(), fit_columns_on_grid_load=False, theme='streamlit', height=600, allow_unsafe_jscode=True)
 
-# Tạo pivot table với tổng (margins=True)
-pivot_2 = pd.pivot_table(
-    NAV_batch,
-    values='lai_vay_ngay',
-    index='khach_hang',
-    columns='ngay',
-    aggfunc='sum',
-    fill_value=None,
-    # margins=True,
-    # margins_name='Tong'
-)
-# Sắp xếp lại cột theo thời gian tăng dần
-pivot_2 = pivot_2.sort_index(axis=1)
-
-# Sắp xếp theo tổng hàng
-pivot_2['__tong_tam__'] = pivot_2.sum(axis=1)
-pivot_2 = pivot_2.sort_values(by='__tong_tam__', ascending=False).drop(columns='__tong_tam__')
-
-# Thêm dòng tổng
-tong_hang = pd.DataFrame(pivot_2.sum(axis=0)).T
-tong_hang.index = ['Tổng']
-pivot_2 = pd.concat([pivot_2, tong_hang])
-
-# Chuyển cột về datetime nếu chưa
-pivot_2.columns = pd.to_datetime(pivot_2.columns)
-
-# Tính thay đổi tuyệt đối
-pivot_2_no_total = pivot_2.drop(index='Tổng')
-pivot_2_diff = pivot_2_no_total.diff(axis=1)
-pivot_2_diff = pd.concat([pivot_2_diff, pd.DataFrame(index=['Tổng'], columns=pivot_2_diff.columns)])
-
-# Tạo cột xen kẽ: giá trị + thay đổi tuyệt đối
-merged_cols = []
-for col in pivot_2.columns:
-    col_str = col.strftime('%d/%m/%Y')
-    merged_cols.append(col_str)
-    if col != pivot_2.columns[0]:
-        merged_cols.append(f'{col_str} (thay đổi)')
-
-# Tạo DataFrame kết hợp
-pivot_2_combined = pd.DataFrame(index=pivot_2.index, columns=merged_cols)
-
-for col in pivot_2.columns:
-    col_str = col.strftime('%d/%m/%Y')
-    pivot_2_combined[col_str] = pivot_2[col]
-    if col != pivot_2.columns[0]:
-        diff_series = pivot_2_diff[col].apply(lambda x: f"+{x:,.0f}" if x > 0 else (f"{x:,.0f}" if x < 0 else ""))
-        pivot_2_combined[f'{col_str} (thay đổi)'] = diff_series
-
-# Đảo ngược thứ tự ngày
-sorted_dates = sorted(pivot_2.columns, reverse=True)
-final_col_order = []
-for col in sorted_dates:
-    col_str = col.strftime('%d/%m/%Y')
-    final_col_order.append(col_str)
-    diff_col = f'{col_str} (thay đổi)'
-    if diff_col in pivot_2_combined.columns:
-        final_col_order.append(diff_col)
-
-pivot_2_combined = pivot_2_combined[final_col_order]
-
-st.header('💰 Lãi vay theo ngày')
-
-pivot_2_combined = pivot_2_combined.copy()
-pivot_2_combined['khach_hang'] = pivot_2_combined.index
-pivot_2_combined = pivot_2_combined.reset_index(drop=True)
-
-# Tạo GridOptionsBuilder
-gb = GridOptionsBuilder.from_dataframe(pivot_2_combined)
-
-# 👇 Căn trái + tự động cao dòng nếu wrapText
-gb.configure_default_column(
-    cellStyle={'textAlign': 'center', 'whiteSpace': 'normal'},
-    resizable=True,
-    wrapText=True,
-    autoHeight=True,
-)
-
-# ✅ Định nghĩa các JS để ẩn số 0 và highlight màu
-js_zero_to_empty = JsCode("""
-    function(params) {
-        if (params.value === 0 || params.value === null || params.value === undefined) {
-            return '';
-        }
-        return params.value.toLocaleString();
-    }
-""")
-
-js_highlight = JsCode("""
-    function(params) {
-        if (params.value == null || params.value === '') return {};
-        let v = params.value;
-        if (typeof v === 'string') {
-            v = parseFloat(v.replace(/,/g, '').replace('+', ''));
-        }
-        if (v > 0) return { color: 'green' };
-        else if (v < 0) return { color: 'red' };
-        return {};
-    }
-""")
-
-# ✅ Cấu hình từng cột
-for col in pivot_2_combined.columns:
-    if col == 'khach_hang':
-        gb.configure_column(col, pinned='center', min_width=180)
-    elif '(thay đổi)' in col:
-        gb.configure_column(col, cellRenderer=js_zero_to_empty, cellStyle=js_highlight, min_width=120)
-    else:
-        gb.configure_column(col, cellRenderer=js_zero_to_empty, min_width=90)
-
-# Build grid config
-gridOptions = gb.build()
-
-row_height = 31
-num_rows = len(pivot_2_combined)
-table_height = row_height * num_rows -40
-
-
-# ✅ Hiển thị AgGrid
-AgGrid(
-    pivot_2_combined,
-    gridOptions=gridOptions,
-    height=table_height,
-    fit_columns_on_grid_load=False,  # Không auto-fit toàn bảng để giữ min_width
-    allow_unsafe_jscode=True
-) 
-
-
-# -----------------
-st.markdown("<br><br>", unsafe_allow_html=True)
-# ----------------
-
-
-# 4.TỔNG LÃI VAY
-
-# Tạo bảng tổng lãi vay theo ngày
-query4 = '''
-select ngay, 
-sum(lai_vay_ngay) as lai_vay_tong
-from NAV_batch
-group by ngay
-'''
-lai_tong = conn.execute(query4).fetchdf()
-lai_tong.set_index('ngay', inplace=True)
-
+# ===========================
+# 8️⃣ TỔNG LÃI VAY
+# ===========================
+st.markdown("<br>", unsafe_allow_html=True)
 st.header("📊 Tổng lãi vay theo ngày")
-st.line_chart(lai_tong['lai_vay_tong'])
 
+query4 = "select ngay, sum(lai_vay_ngay) as tong from NAV_batch group by ngay order by ngay"
+tong = conn.execute(query4).fetchdf().set_index('ngay')
 
-
+st.line_chart(tong['tong'])
