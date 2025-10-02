@@ -138,11 +138,11 @@ function(params) {{
     if (params.value === {max_val}) {{
         return {{
             'backgroundColor': 'lightgreen',
-            'textAlign': 'left'
+            'textAlign': 'center'
         }};
     }}
     return {{
-        'textAlign': 'left'
+        'textAlign': 'center'
     }};
 }}
 """
@@ -152,9 +152,9 @@ gb.configure_default_column(
     editable=False,
     filter=True,
     resizable=True,
-    cellStyle={'textAlign': 'left'}  # mặc định căn trái
+    cellStyle={'textAlign': 'center'}  # mặc định căn trái
 )
-gb.configure_column('Khách hàng', pinned='left', width=150)
+gb.configure_column('Khách hàng', pinned='center', width=150)
 
 for col in numeric_columns:
     cellStyle_js = JsCode(highlight_max_template.format(max_val=max_values[col]))
@@ -330,7 +330,7 @@ gb = GridOptionsBuilder.from_dataframe(pivot_2_combined)
 
 # 👇 Căn trái + tự động cao dòng nếu wrapText
 gb.configure_default_column(
-    cellStyle={'textAlign': 'left', 'whiteSpace': 'normal'},
+    cellStyle={'textAlign': 'center', 'whiteSpace': 'normal'},
     resizable=True,
     wrapText=True,
     autoHeight=True,
@@ -362,7 +362,7 @@ js_highlight = JsCode("""
 # ✅ Cấu hình từng cột
 for col in pivot_2_combined.columns:
     if col == 'khach_hang':
-        gb.configure_column(col, pinned='left', min_width=180)
+        gb.configure_column(col, pinned='center', min_width=180)
     elif '(thay đổi)' in col:
         gb.configure_column(col, cellRenderer=js_zero_to_empty, cellStyle=js_highlight, min_width=120)
     else:
