@@ -9,16 +9,16 @@ from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 st.set_page_config(layout="wide", page_title="🧮 Dashboard Khách hàng")
 conn = duckdb.connect(':memory:')
 
-# Header center cho AgGrid
+# Header căn giữa cho AgGrid
 custom_css = {
     ".ag-header-cell-label": {"justify-content": "center"},
     ".ag-header-group-cell-label": {"justify-content": "center"},
 }
 
-# JS: số (nghìn) căn phải, 0/None -> rỗng
+# JS: format số nghìn, căn phải (0/None -> '0' để luôn thấy số)
 js_number_right = JsCode("""
 function(params) {
-  if (params.value === 0 || params.value === null || params.value === undefined || params.value === '') return '';
+  if (params.value === null || params.value === undefined || params.value === '') return '0';
   let v = params.value;
   if (typeof v === 'string') {
     let num = Number(v.replace(/,/g,''));
@@ -29,10 +29,10 @@ function(params) {
 }
 """)
 
-# JS: số hoặc % căn phải (cho cột "Tỉ lệ")
+# JS: format % cho cột 'Tỉ lệ' & số thường cho cột khác, căn phải
 js_number_or_percent_right = JsCode("""
 function(params) {
-  if (params.value === 0 || params.value === null || params.value === undefined || params.value === '') return '';
+  if (params.value === null || params.value === undefined || params.value === '') return '0';
   if (params.colDef.field === 'Tỉ lệ') {
     return (Number(params.value) * 100).toFixed(2) + '%';
   }
@@ -46,7 +46,7 @@ function(params) {
 }
 """)
 
-# JS: style highlight max (nhưng vẫn right align)
+# JS: style highlight max nhưng vẫn right align
 js_highlight_max_tpl = """
 function(params) {{
   if (params.value === {max_val}) {{
@@ -56,17 +56,26 @@ function(params) {{
 }}
 """
 
-# JS: render thay đổi (±, màu) + căn phải
-js_change_renderer = JsCode("""
+# JS: formatter cho cột "(thay đổi)" – luôn hiện số (cả 0), có dấu ±, màu
+js_change_valuefmt = JsCode("""
 function(params) {
-  if (params.value === null || params.value === undefined || params.value === '') return '';
-  let v = params.value;
-  let num = Number(String(v).replace(/,/g,'')); // robust parse
-  if (isNaN(num)) return v;
-  let sign = (num > 0 ? '+' : '');
-  let txt = sign + Math.abs(num).toLocaleString('vi-VN');
-  let color = (num > 0 ? 'green' : (num < 0 ? 'red' : ''));
-  return `<span style="color:${color}; float:right;">${sign === '+' ? '+' : (num < 0 ? '-' : '')}${Math.abs(num).toLocaleString('vi-VN')}</span>`;
+  if (params.value === null || params.value === undefined || params.value === '') return '0';
+  let num = Number(String(params.value).replace(/,/g,''));
+  if (isNaN(num)) return '0';
+  let sign = (num > 0 ? '+' : (num < 0 ? '-' : ''));
+  let absval = Math.abs(num).toLocaleString('vi-VN');
+  return (sign ? sign : '') + absval;
+}
+""")
+
+js_change_style = JsCode("""
+function(params) {
+  if (params.value === null || params.value === undefined || params.value === '') return {textAlign:'right'};
+  let num = Number(String(params.value).replace(/,/g,''));
+  if (isNaN(num)) return {textAlign:'right'};
+  if (num > 0) return {color:'green', textAlign:'right'};
+  if (num < 0) return {color:'red', textAlign:'right'};
+  return {textAlign:'right'};
 }
 """)
 
@@ -187,51 +196,46 @@ st.markdown("<br>", unsafe_allow_html=True)
 st.header("💰 Lãi vay theo ngày")
 
 lai = conn.execute("select khach_hang, ngay, lai_vay_ngay from NAV_batch").fetchdf()
+# pivot theo ASC để tính diff đúng ngày liền trước
 pivot_loan = pd.pivot_table(lai, values='lai_vay_ngay', index='khach_hang', columns='ngay',
-                            aggfunc='sum', fill_value=0)
+                            aggfunc='sum', fill_value=0).sort_index(axis=1)
 
-# 1) Cột ngày ASC để tính diff: diff(d) = value(d) - value(prev)
-pivot_loan = pivot_loan.sort_index(axis=1)
+# diff(d) = value(d) - value(prev day)
 diff_loan = pivot_loan.diff(axis=1)
 
-# 2) Tạo bảng "giá trị + (thay đổi)" theo THỨ TỰ MỚI NHẤT → CŨ NHẤT
-dates_asc = list(pivot_loan.columns)
-dates_desc = list(reversed(dates_asc))
+# Tạo bảng hiển thị: MỚI → CŨ, và chèn cột "(thay đổi)" sau mỗi cột ngày (trừ ngày cổ nhất)
+dates_asc = list(pivot_loan.columns)            # cũ -> mới
+dates_desc = list(reversed(dates_asc))          # mới -> cũ
 
 cols_out = []
 for d in dates_desc:
     ds = d.strftime("%d/%m/%Y")
     cols_out.append(ds)  # giá trị ngày d
-    if d != dates_asc[0]:  # không có thay đổi cho ngày cổ nhất
+    if d != dates_asc[0]:  # chỉ thêm "(thay đổi)" nếu d không phải là ngày cổ nhất
         cols_out.append(f"{ds} (thay đổi)")
 
 combined = pd.DataFrame(index=pivot_loan.index, columns=cols_out)
-
 for d in dates_desc:
     ds = d.strftime("%d/%m/%Y")
     combined[ds] = pivot_loan[d]
     if d != dates_asc[0]:
-        # diff tại ngày d so với ngày trước đó (theo ASC)
-        combined[f"{ds} (thay đổi)"] = diff_loan[d]
+        combined[f"{ds} (thay đổi)"] = diff_loan[d]  # số thực; formatter sẽ hiển thị ± và màu
 
-# Đưa index thành cột
-combined = combined.reset_index().rename(columns={'khach_hang':'khach_hang'})
-combined['khach_hang'] = combined['khach_hang'].astype(str)
+# Đặt tên index & đưa thành cột 'Khách hàng' (tránh nhầm với 'khach_hang')
+combined.index.name = 'Khách hàng'
+combined = combined.reset_index()
 
 gb3 = GridOptionsBuilder.from_dataframe(combined)
-# Header center, chữ center; số right
-gb3.configure_default_column(resizable=True, headerClass='centered',
-                             cellStyle={'textAlign':'right'})  # default right
-gb3.configure_column('khach_hang', header_name='Khách hàng',
-                     pinned='left', min_width=180,
-                     cellStyle={'textAlign':'center'}, headerClass='centered')
+# Header center; mặc định data là số -> right
+gb3.configure_default_column(resizable=True, headerClass='centered', cellStyle={'textAlign':'right'})
+gb3.configure_column('Khách hàng', pinned='left', min_width=180, cellStyle={'textAlign':'center'}, headerClass='centered')
 
 for col in combined.columns:
-    if col == 'khach_hang':
+    if col == 'Khách hàng':
         continue
     if '(thay đổi)' in col:
-        # renderer đổi màu ± và right align
-        gb3.configure_column(col, cellRenderer=js_change_renderer, min_width=120, headerClass='centered')
+        gb3.configure_column(col, valueFormatter=js_change_valuefmt, cellStyle=js_change_style,
+                             min_width=120, headerClass='centered')
     else:
         gb3.configure_column(col, cellRenderer=js_number_right, min_width=110, headerClass='centered')
 
