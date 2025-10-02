@@ -2,9 +2,7 @@
 # .\venv1\Scripts\activate
 # pip install -r requirements.txt
 # pip freeze > requirements.txt
-duckdb
-pandas
-streamlit
+
 import pandas as pd
 import streamlit as st 
 import duckdb
