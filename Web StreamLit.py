@@ -289,7 +289,7 @@ AgGrid(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 3. LÃI VAY THEO NGÀY (ẩn hàng toàn 0 + sort theo ngày gần nhất)
+# 3. LÃI VAY THEO NGÀY (ẩn nếu 20 ngày gần nhất đều = 0 + sort theo ngày gần nhất)
 # ===========================
 st.header('💰 Lãi vay theo ngày')
 
@@ -332,8 +332,8 @@ for d in dates_desc:
 pivot_2_combined.index.name = 'Khách hàng'
 pivot_2_combined = pivot_2_combined.reset_index()
 
-# ===== ẨN HÀNG toàn 0 & SẮP XẾP THEO NGÀY GẦN NHẤT =====
-# Các cột ngày (loại 'Khách hàng' và '(thay đổi)')
+# ===== ẨN HÀNG toàn 0 TRONG 20 NGÀY GẦN NHẤT & SẮP XẾP THEO NGÀY GẦN NHẤT =====
+# Các cột ngày (loại 'Khách hàng' và '(thay đổi)') – thứ tự: mới -> cũ
 value_cols = [c for c in pivot_2_combined.columns
               if c != 'Khách hàng' and '(thay đổi)' not in c]
 
@@ -342,18 +342,22 @@ pivot_2_combined[value_cols] = pivot_2_combined[value_cols].apply(
     pd.to_numeric, errors='coerce'
 ).fillna(0)
 
-# Ẩn hàng có tất cả ngày = 0
-mask_nonzero = (pivot_2_combined[value_cols].abs().sum(axis=1) > 0)
-df_show = pivot_2_combined[mask_nonzero].copy()
+# Lấy tối đa 20 ngày gần nhất (nếu ít hơn 20 thì lấy tất cả)
+recent_n = min(len(value_cols), 20)
+recent_cols = value_cols[:recent_n]   # vì value_cols đang là mới -> cũ
 
-# Cột ngày gần nhất (đầu danh sách value_cols vì đang mới -> cũ)
-today_col = value_cols[0]
-# Sắp xếp giảm dần theo giá trị ngày gần nhất
-df_show = df_show.sort_values(by=today_col, ascending=False)
+# Ẩn khách hàng có 20 ngày gần nhất đều = 0
+mask_nonzero_recent = (pivot_2_combined[recent_cols].abs().sum(axis=1) > 0)
+df_show = pivot_2_combined[mask_nonzero_recent].copy()
+
+# Sắp xếp giảm dần theo ngày gần nhất
+if len(value_cols) > 0:
+    today_col = value_cols[0]  # cột ngày mới nhất
+    df_show = df_show.sort_values(by=today_col, ascending=False)
 
 # Nếu rỗng sau khi lọc
 if df_show.empty:
-    st.info("Không có dữ liệu (tất cả hàng đều bằng 0).")
+    st.info("Không có dữ liệu (20 ngày gần nhất đều bằng 0).")
 else:
     gb3 = GridOptionsBuilder.from_dataframe(df_show)
     gb3.configure_default_column(resizable=True, headerClass='centered',
