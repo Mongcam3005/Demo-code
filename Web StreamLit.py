@@ -167,15 +167,41 @@ max_values = {
 }
 
 gb1 = GridOptionsBuilder.from_dataframe(nav_daily_view)
-gb1.configure_default_column(editable=False, filter=True, resizable=True,
-                             headerClass='centered', cellStyle={'textAlign': 'center'})
-gb1.configure_column('Khách hàng', pinned='left', width=170,
-                     cellStyle={'textAlign':'center'}, headerClass='centered')
 
+# Mặc định: có filter + floatingFilter; text align center cho text
+gb1.configure_default_column(
+    editable=False,
+    resizable=True,
+    filter=True,            # bật filter mặc định
+    floatingFilter=True,    # hiện ô filter dưới header
+    headerClass='centered',
+    cellStyle={'textAlign': 'center'}
+)
+
+# Cột text
+gb1.configure_column(
+    'Khách hàng',
+    pinned='left',
+    width=170,
+    filter='agTextColumnFilter',       # 🔎 lọc theo text
+    cellStyle={'textAlign': 'center'},
+    headerClass='centered'
+)
+
+# Cột số
 for col in numeric_columns:
     js_style = JsCode(js_highlight_max_tpl.format(max_val=max_values[col]))
-    gb1.configure_column(col, cellRenderer=js_number_or_percent_right,
-                         cellStyle=js_style, width=140, headerClass='centered')
+    gb1.configure_column(
+        col,
+        filter='agNumberColumnFilter',           # 🔢 lọc theo số
+        cellRenderer=js_number_or_percent_right, # hiển thị (số/%) như cũ
+        cellStyle=js_style,
+        width=140,
+        headerClass='centered'
+    )
+
+# Bật thanh bên "Filters" để lọc nâng cao
+gb1.configure_grid_options(sideBar=True)
 
 st.header('📈 NAV ngày')
 AgGrid(
@@ -187,7 +213,6 @@ AgGrid(
     theme='streamlit',
     allow_unsafe_jscode=True
 )
-
 
 st.markdown("<br>", unsafe_allow_html=True)
 
