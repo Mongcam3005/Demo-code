@@ -289,7 +289,7 @@ AgGrid(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 3. LÃI VAY THEO NGÀY (gộp "thay đổi" vào cột hôm nay) – FIX: render HTML
+# 3. LÃI VAY THEO NGÀY (gộp "thay đổi" vào cột hôm nay) – render bằng DOM
 # ===========================
 st.header('💰 Lãi vay theo ngày')
 
@@ -306,7 +306,7 @@ pivot_2 = pd.pivot_table(
     columns='ngay',
     aggfunc='sum',
     fill_value=0
-).sort_index(axis=1)
+).sort_index(axis=1)  # thời gian tăng dần
 
 if len(pivot_2.columns) == 0:
     st.info("Chưa có dữ liệu lãi vay.")
@@ -314,41 +314,55 @@ else:
     latest_dt = pivot_2.columns[-1]
     prev_dt   = pivot_2.columns[-2] if len(pivot_2.columns) > 1 else None
 
+    # Đổi tên cột ngày -> dd/mm/YYYY để hiển thị
     rename_map = {d: d.strftime('%d/%m/%Y') for d in pivot_2.columns}
     df_disp = pivot_2.rename(columns=rename_map).copy()
 
+    # Cột phụ: thay đổi so với ngày liền trước (chỉ dùng cho renderer)
     if prev_dt is not None:
         df_disp['_today_change'] = (pivot_2[latest_dt] - pivot_2[prev_dt]).values
     else:
         df_disp['_today_change'] = 0
 
+    # Thứ tự cột: hôm nay trước rồi đến các ngày còn lại (mới -> cũ)
     dates_desc = list(reversed(list(pivot_2.columns)))
     date_cols_desc = [d.strftime('%d/%m/%Y') for d in dates_desc]
     today_col = latest_dt.strftime('%d/%m/%Y')
 
+    # Đưa index ra cột
     df_disp.index.name = 'Khách hàng'
     df_disp = df_disp.reset_index()
     df_disp = df_disp[['Khách hàng'] + date_cols_desc + ['_today_change']]
 
-    # Renderer: 2 dòng trong cùng 1 ô (HTML)
+    # Renderer DOM: 2 dòng trong 1 ô
     js_today_renderer = JsCode("""
     function(params) {
-      // Giá trị hôm nay (dòng 1)
+      var container = document.createElement('div');
+      container.style.textAlign = 'right';
+      container.style.lineHeight = '1.2';
+
+      // Dòng 1: giá trị hôm nay
       var vr = params.value;
       var v = (vr===null||vr===undefined||vr==='') ? null : Number(String(vr).replace(/,/g,''));
-      var top = (v===null || isNaN(v) || v===0) ? '' : v.toLocaleString('vi-VN');
-
-      // Thay đổi so với ngày trước (dòng 2)
-      var cr = params.data ? params.data['_today_change'] : 0;
-      var d = Number(String(cr).replace(/,/g,''));
-      var sub = '';
-      if (!isNaN(d) && d !== 0) {
-        var color = d>0 ? 'green' : 'red';
-        var sign  = d>0 ? '+' : '';
-        sub = '<div style="font-size:12px; color:'+color+';">'+sign+Math.abs(d).toLocaleString('vi-VN')+'</div>';
+      if (v !== null && !isNaN(v) && v !== 0) {
+        var top = document.createElement('div');
+        top.textContent = v.toLocaleString('vi-VN');
+        container.appendChild(top);
       }
-      // Trả về HTML
-      return '<div style="text-align:right; line-height:1.2">'+top+sub+'</div>';
+
+      // Dòng 2: thay đổi so với ngày trước (±, màu)
+      var cr = (params.data && params.data._today_change!=null) ? params.data._today_change : 0;
+      var d = Number(String(cr).replace(/,/g,''));
+      if (!isNaN(d) && d !== 0) {
+        var sub = document.createElement('div');
+        sub.style.fontSize = '12px';
+        sub.style.color = (d > 0 ? 'green' : 'red');
+        var sign = d > 0 ? '+' : '';
+        sub.textContent = sign + Math.abs(d).toLocaleString('vi-VN');
+        container.appendChild(sub);
+      }
+
+      return container;
     }
     """)
 
@@ -363,22 +377,14 @@ else:
     gb3.configure_column('Khách hàng', pinned='left', min_width=180,
                          cellStyle={'textAlign':'center'}, headerClass='centered')
 
-    # ⭐ Quan trọng: bật render HTML (không escape)
-    gb3.configure_grid_options(suppressHtmlEscaping=True)
-
     # Ẩn cột phụ
     gb3.configure_column('_today_change', hide=True)
 
-    # Cột hôm nay: dùng renderer 2 dòng + KHÔNG escape HTML
-    gb3.configure_column(
-        today_col,
-        cellRenderer=js_today_renderer,
-        cellRendererParams={'suppressHtmlEscaping': True},
-        min_width=120,
-        headerClass='centered'
-    )
+    # Cột hôm nay: dùng renderer DOM 2 dòng
+    gb3.configure_column(today_col, cellRenderer=js_today_renderer,
+                         min_width=120, headerClass='centered')
 
-    # Các ngày khác: chỉ số (căn phải)
+    # Các ngày khác: hiển thị số bình thường
     for col in date_cols_desc:
         if col == today_col:
             continue
