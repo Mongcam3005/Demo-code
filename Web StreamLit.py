@@ -181,6 +181,17 @@ AgGrid(
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# Ẩn ô nếu |value| < 10, còn lại format nghìn & căn phải
+js_number_right_thr10 = JsCode("""
+function(params) {
+  var v = params.value;
+  if (v === null || v === undefined || v === '') return '';
+  var num = (typeof v === 'number') ? v : Number(String(v).replace(/,/g,''));
+  if (isNaN(num)) return '';
+  if (Math.abs(num) < 10000) return '';   // 👈 NGƯỠNG 10
+  return num.toLocaleString('vi-VN');
+}
+""")
 # ===========================
 # 2. SỐ LƯỢNG MUA (Tổng ở cuối theo CỘT)
 # ===========================
