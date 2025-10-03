@@ -289,143 +289,73 @@ AgGrid(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 3.LÃI VAY THEO NGÀY
+# 3. LÃI VAY THEO NGÀY (có cột "thay đổi")
+# ===========================
+st.header('💰 Lãi vay theo ngày')
 
-# Tạo bảng lãi vay theo ngày
 query3 = '''
-select khach_hang,
-    ngay,
-    lai_vay_ngay
+select khach_hang, ngay, lai_vay_ngay
 from NAV_batch
 '''
 lai_ngay = conn.execute(query3).fetchdf()
 
-# Tạo pivot table với tổng (margins=True)
 pivot_2 = pd.pivot_table(
-    NAV_batch,
+    lai_ngay,
     values='lai_vay_ngay',
     index='khach_hang',
     columns='ngay',
     aggfunc='sum',
-    fill_value=None,
-    # margins=True,
-    # margins_name='Tong'
-)
-# Sắp xếp lại cột theo thời gian tăng dần
-pivot_2 = pivot_2.sort_index(axis=1)
+    fill_value=0
+).sort_index(axis=1)  # thời gian tăng dần để tính diff
 
-# Sắp xếp theo tổng hàng
-pivot_2['__tong_tam__'] = pivot_2.sum(axis=1)
-pivot_2 = pivot_2.sort_values(by='__tong_tam__', ascending=False).drop(columns='__tong_tam__')
+diff_2 = pivot_2.diff(axis=1)
 
-# Thêm dòng tổng
-tong_hang = pd.DataFrame(pivot_2.sum(axis=0)).T
-tong_hang.index = ['Tổng']
-pivot_2 = pd.concat([pivot_2, tong_hang])
+# Tạo bảng hiển thị: NGÀY MỚI -> CŨ, chèn cột "(thay đổi)" sau mỗi ngày (trừ ngày cổ nhất)
+dates_asc  = list(pivot_2.columns)           # cũ -> mới
+dates_desc = list(reversed(dates_asc))       # mới -> cũ
 
-# Chuyển cột về datetime nếu chưa
-pivot_2.columns = pd.to_datetime(pivot_2.columns)
+cols_out = []
+for d in dates_desc:
+    ds = d.strftime('%d/%m/%Y')
+    cols_out.append(ds)
+    if d != dates_asc[0]:
+        cols_out.append(f'{ds} (thay đổi)')
 
-# Tính thay đổi tuyệt đối
-pivot_2_no_total = pivot_2.drop(index='Tổng')
-pivot_2_diff = pivot_2_no_total.diff(axis=1)
-pivot_2_diff = pd.concat([pivot_2_diff, pd.DataFrame(index=['Tổng'], columns=pivot_2_diff.columns)])
+pivot_2_combined = pd.DataFrame(index=pivot_2.index, columns=cols_out)
+for d in dates_desc:
+    ds = d.strftime('%d/%m/%Y')
+    pivot_2_combined[ds] = pivot_2[d]
+    if d != dates_asc[0]:
+        pivot_2_combined[f'{ds} (thay đổi)'] = diff_2[d]
 
-# Tạo cột xen kẽ: giá trị + thay đổi tuyệt đối
-merged_cols = []
-for col in pivot_2.columns:
-    col_str = col.strftime('%d/%m/%Y')
-    merged_cols.append(col_str)
-    if col != pivot_2.columns[0]:
-        merged_cols.append(f'{col_str} (thay đổi)')
+# Đưa index ra cột chính xác tên "Khách hàng"
+pivot_2_combined.index.name = 'Khách hàng'
+pivot_2_combined = pivot_2_combined.reset_index()
 
-# Tạo DataFrame kết hợp
-pivot_2_combined = pd.DataFrame(index=pivot_2.index, columns=merged_cols)
+gb3 = GridOptionsBuilder.from_dataframe(pivot_2_combined)
+gb3.configure_default_column(resizable=True, headerClass='centered',
+                             cellStyle={'textAlign': 'right'})   # mặc định: số căn phải
+gb3.configure_column('Khách hàng', pinned='left', min_width=180,
+                     cellStyle={'textAlign':'center'}, headerClass='centered')
 
-for col in pivot_2.columns:
-    col_str = col.strftime('%d/%m/%Y')
-    pivot_2_combined[col_str] = pivot_2[col]
-    if col != pivot_2.columns[0]:
-        diff_series = pivot_2_diff[col].apply(lambda x: f"+{x:,.0f}" if x > 0 else (f"{x:,.0f}" if x < 0 else ""))
-        pivot_2_combined[f'{col_str} (thay đổi)'] = diff_series
-
-# Đảo ngược thứ tự ngày
-sorted_dates = sorted(pivot_2.columns, reverse=True)
-final_col_order = []
-for col in sorted_dates:
-    col_str = col.strftime('%d/%m/%Y')
-    final_col_order.append(col_str)
-    diff_col = f'{col_str} (thay đổi)'
-    if diff_col in pivot_2_combined.columns:
-        final_col_order.append(diff_col)
-
-pivot_2_combined = pivot_2_combined[final_col_order]
-
-st.header('💰 Lãi vay theo ngày')
-
-pivot_2_combined = pivot_2_combined.copy()
-pivot_2_combined['khach_hang'] = pivot_2_combined.index
-pivot_2_combined = pivot_2_combined.reset_index(drop=True)
-
-# Tạo GridOptionsBuilder
-gb = GridOptionsBuilder.from_dataframe(pivot_2_combined)
-
-# 👇 Căn trái + tự động cao dòng nếu wrapText
-gb.configure_default_column(
-    cellStyle={'textAlign': 'left', 'whiteSpace': 'normal'},
-    resizable=True,
-    wrapText=True,
-    autoHeight=True,
-)
-
-# ✅ Định nghĩa các JS để ẩn số 0 và highlight màu
-js_zero_to_empty = JsCode("""
-    function(params) {
-        if (params.value === 0 || params.value === null || params.value === undefined) {
-            return '';
-        }
-        return params.value.toLocaleString();
-    }
-""")
-
-js_highlight = JsCode("""
-    function(params) {
-        if (params.value == null || params.value === '') return {};
-        let v = params.value;
-        if (typeof v === 'string') {
-            v = parseFloat(v.replace(/,/g, '').replace('+', ''));
-        }
-        if (v > 0) return { color: 'green' };
-        else if (v < 0) return { color: 'red' };
-        return {};
-    }
-""")
-
-# ✅ Cấu hình từng cột
 for col in pivot_2_combined.columns:
-    if col == 'khach_hang':
-        gb.configure_column(col, pinned='left', min_width=180)
-    elif '(thay đổi)' in col:
-        gb.configure_column(col, cellRenderer=js_zero_to_empty, cellStyle=js_highlight, min_width=120)
+    if col == 'Khách hàng':
+        continue
+    if '(thay đổi)' in col:
+        gb3.configure_column(col, valueFormatter=js_change_valuefmt,
+                             cellStyle=js_change_style, min_width=120, headerClass='centered')
     else:
-        gb.configure_column(col, cellRenderer=js_zero_to_empty, min_width=90)
+        gb3.configure_column(col, cellRenderer=js_number_right, min_width=110, headerClass='centered')
 
-# Build grid config
-gridOptions = gb.build()
-
-row_height = 31
-num_rows = len(pivot_2_combined)
-table_height = row_height * num_rows -40
-
-
-# ✅ Hiển thị AgGrid
 AgGrid(
     pivot_2_combined,
-    gridOptions=gridOptions,
-    height=table_height,
-    fit_columns_on_grid_load=False,  # Không auto-fit toàn bảng để giữ min_width
+    gridOptions=gb3.build(),
+    custom_css=custom_css,
+    height=620,
+    fit_columns_on_grid_load=False,
+    theme='streamlit',
     allow_unsafe_jscode=True
-) 
+)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
