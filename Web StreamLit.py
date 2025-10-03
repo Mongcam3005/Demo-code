@@ -289,7 +289,7 @@ AgGrid(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 3. LÃI VAY THEO NGÀY (có cột "thay đổi")
+# 3. LÃI VAY THEO NGÀY (ẩn hàng toàn 0 + sort theo ngày gần nhất)
 # ===========================
 st.header('💰 Lãi vay theo ngày')
 
@@ -317,9 +317,9 @@ dates_desc = list(reversed(dates_asc))       # mới -> cũ
 cols_out = []
 for d in dates_desc:
     ds = d.strftime('%d/%m/%Y')
-    cols_out.append(ds)
+    cols_out.append(ds)                               # cột ngày
     if d != dates_asc[0]:
-        cols_out.append(f'{ds} (thay đổi)')
+        cols_out.append(f'{ds} (thay đổi)')          # cột thay đổi
 
 pivot_2_combined = pd.DataFrame(index=pivot_2.index, columns=cols_out)
 for d in dates_desc:
@@ -328,34 +328,57 @@ for d in dates_desc:
     if d != dates_asc[0]:
         pivot_2_combined[f'{ds} (thay đổi)'] = diff_2[d]
 
-# Đưa index ra cột chính xác tên "Khách hàng"
+# Đưa index ra cột "Khách hàng"
 pivot_2_combined.index.name = 'Khách hàng'
 pivot_2_combined = pivot_2_combined.reset_index()
 
-gb3 = GridOptionsBuilder.from_dataframe(pivot_2_combined)
-gb3.configure_default_column(resizable=True, headerClass='centered',
-                             cellStyle={'textAlign': 'right'})   # mặc định: số căn phải
-gb3.configure_column('Khách hàng', pinned='left', min_width=180,
-                     cellStyle={'textAlign':'center'}, headerClass='centered')
+# ===== ẨN HÀNG toàn 0 & SẮP XẾP THEO NGÀY GẦN NHẤT =====
+# Các cột ngày (loại 'Khách hàng' và '(thay đổi)')
+value_cols = [c for c in pivot_2_combined.columns
+              if c != 'Khách hàng' and '(thay đổi)' not in c]
 
-for col in pivot_2_combined.columns:
-    if col == 'Khách hàng':
-        continue
-    if '(thay đổi)' in col:
-        gb3.configure_column(col, valueFormatter=js_change_valuefmt,
-                             cellStyle=js_change_style, min_width=120, headerClass='centered')
-    else:
-        gb3.configure_column(col, cellRenderer=js_number_right, min_width=110, headerClass='centered')
+# ép numeric, NaN -> 0
+pivot_2_combined[value_cols] = pivot_2_combined[value_cols].apply(
+    pd.to_numeric, errors='coerce'
+).fillna(0)
 
-AgGrid(
-    pivot_2_combined,
-    gridOptions=gb3.build(),
-    custom_css=custom_css,
-    height=620,
-    fit_columns_on_grid_load=False,
-    theme='streamlit',
-    allow_unsafe_jscode=True
-)
+# Ẩn hàng có tất cả ngày = 0
+mask_nonzero = (pivot_2_combined[value_cols].abs().sum(axis=1) > 0)
+df_show = pivot_2_combined[mask_nonzero].copy()
+
+# Cột ngày gần nhất (đầu danh sách value_cols vì đang mới -> cũ)
+today_col = value_cols[0]
+# Sắp xếp giảm dần theo giá trị ngày gần nhất
+df_show = df_show.sort_values(by=today_col, ascending=False)
+
+# Nếu rỗng sau khi lọc
+if df_show.empty:
+    st.info("Không có dữ liệu (tất cả hàng đều bằng 0).")
+else:
+    gb3 = GridOptionsBuilder.from_dataframe(df_show)
+    gb3.configure_default_column(resizable=True, headerClass='centered',
+                                 cellStyle={'textAlign': 'right'})   # mặc định: số căn phải
+    gb3.configure_column('Khách hàng', pinned='left', min_width=180,
+                         cellStyle={'textAlign':'center'}, headerClass='centered')
+
+    for col in df_show.columns:
+        if col == 'Khách hàng':
+            continue
+        if '(thay đổi)' in col:
+            gb3.configure_column(col, valueFormatter=js_change_valuefmt,
+                                 cellStyle=js_change_style, min_width=120, headerClass='centered')
+        else:
+            gb3.configure_column(col, cellRenderer=js_number_right, min_width=110, headerClass='centered')
+
+    AgGrid(
+        df_show,
+        gridOptions=gb3.build(),
+        custom_css=custom_css,
+        height=620,
+        fit_columns_on_grid_load=False,
+        theme='streamlit',
+        allow_unsafe_jscode=True
+    )
 
 st.markdown("<br>", unsafe_allow_html=True)
 
