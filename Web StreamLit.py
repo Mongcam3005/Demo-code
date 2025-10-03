@@ -120,7 +120,7 @@ st.title('🧮 Dashboard Khách hàng')
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 1. NAV NGÀY
+# 1. NAV NGÀY  (ẩn nguyên hàng nếu |NAV| < 100,000)
 # ===========================
 query1 ='''
 select a.*, 
@@ -156,13 +156,22 @@ numeric_columns = ['NAV', 'Lãi lỗ sau cùng', 'Dư nợ hiện tại', 'Giá 
 for col in numeric_columns:
     nav_daily[col] = pd.to_numeric(nav_daily[col], errors='coerce').fillna(0)
 
-max_values = {col: nav_daily[col].max() for col in numeric_columns}
+# 👉 Lọc: chỉ hiển thị các KH có |NAV| >= 100,000
+THRESH = 100_000
+nav_daily_view = nav_daily[nav_daily['NAV'].abs() >= THRESH].copy()
 
-gb1 = GridOptionsBuilder.from_dataframe(nav_daily)
+# tránh lỗi highlight khi bảng rỗng
+max_values = {
+    col: (nav_daily_view[col].max() if not nav_daily_view.empty else 0)
+    for col in numeric_columns
+}
+
+gb1 = GridOptionsBuilder.from_dataframe(nav_daily_view)
 gb1.configure_default_column(editable=False, filter=True, resizable=True,
                              headerClass='centered', cellStyle={'textAlign': 'center'})
 gb1.configure_column('Khách hàng', pinned='left', width=170,
                      cellStyle={'textAlign':'center'}, headerClass='centered')
+
 for col in numeric_columns:
     js_style = JsCode(js_highlight_max_tpl.format(max_val=max_values[col]))
     gb1.configure_column(col, cellRenderer=js_number_or_percent_right,
@@ -170,7 +179,7 @@ for col in numeric_columns:
 
 st.header('📈 NAV ngày')
 AgGrid(
-    nav_daily,
+    nav_daily_view,
     gridOptions=gb1.build(),
     custom_css=custom_css,
     height=450,
@@ -179,19 +188,9 @@ AgGrid(
     allow_unsafe_jscode=True
 )
 
+
 st.markdown("<br>", unsafe_allow_html=True)
 
-# Ẩn ô nếu |value| < 10, còn lại format nghìn & căn phải
-js_number_right_thr10 = JsCode("""
-function(params) {
-  var v = params.value;
-  if (v === null || v === undefined || v === '') return '';
-  var num = (typeof v === 'number') ? v : Number(String(v).replace(/,/g,''));
-  if (isNaN(num)) return '';
-  if (Math.abs(num) < 10000) return '';   // 👈 NGƯỠNG 10
-  return num.toLocaleString('vi-VN');
-}
-""")
 # ===========================
 # 2. SỐ LƯỢNG MUA (Tổng ở cuối theo CỘT)
 # ===========================
