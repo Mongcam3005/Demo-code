@@ -37,4 +37,5 @@ tzdata==2025.2
 urllib3==2.5.0
 watchdog==6.0.0
 duckdb==1.4.0
-st-aggrid == 0.3.4
+streamlit==1.49.1
+streamlit-aggrid==0.3.4.post3
