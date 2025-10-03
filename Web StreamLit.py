@@ -289,117 +289,143 @@ AgGrid(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 3. LÃI VAY THEO NGÀY (gộp "thay đổi" vào cột hôm nay) – render bằng DOM
-# ===========================
-st.header('💰 Lãi vay theo ngày')
+# 3.LÃI VAY THEO NGÀY
 
+# Tạo bảng lãi vay theo ngày
 query3 = '''
-select khach_hang, ngay, lai_vay_ngay
+select khach_hang,
+    ngay,
+    lai_vay_ngay
 from NAV_batch
 '''
 lai_ngay = conn.execute(query3).fetchdf()
 
+# Tạo pivot table với tổng (margins=True)
 pivot_2 = pd.pivot_table(
-    lai_ngay,
+    NAV_batch,
     values='lai_vay_ngay',
     index='khach_hang',
     columns='ngay',
     aggfunc='sum',
-    fill_value=0
-).sort_index(axis=1)  # thời gian tăng dần
+    fill_value=None,
+    # margins=True,
+    # margins_name='Tong'
+)
+# Sắp xếp lại cột theo thời gian tăng dần
+pivot_2 = pivot_2.sort_index(axis=1)
 
-if len(pivot_2.columns) == 0:
-    st.info("Chưa có dữ liệu lãi vay.")
-else:
-    latest_dt = pivot_2.columns[-1]
-    prev_dt   = pivot_2.columns[-2] if len(pivot_2.columns) > 1 else None
+# Sắp xếp theo tổng hàng
+pivot_2['__tong_tam__'] = pivot_2.sum(axis=1)
+pivot_2 = pivot_2.sort_values(by='__tong_tam__', ascending=False).drop(columns='__tong_tam__')
 
-    # Đổi tên cột ngày -> dd/mm/YYYY để hiển thị
-    rename_map = {d: d.strftime('%d/%m/%Y') for d in pivot_2.columns}
-    df_disp = pivot_2.rename(columns=rename_map).copy()
+# Thêm dòng tổng
+tong_hang = pd.DataFrame(pivot_2.sum(axis=0)).T
+tong_hang.index = ['Tổng']
+pivot_2 = pd.concat([pivot_2, tong_hang])
 
-    # Cột phụ: thay đổi so với ngày liền trước (chỉ dùng cho renderer)
-    if prev_dt is not None:
-        df_disp['_today_change'] = (pivot_2[latest_dt] - pivot_2[prev_dt]).values
-    else:
-        df_disp['_today_change'] = 0
+# Chuyển cột về datetime nếu chưa
+pivot_2.columns = pd.to_datetime(pivot_2.columns)
 
-    # Thứ tự cột: hôm nay trước rồi đến các ngày còn lại (mới -> cũ)
-    dates_desc = list(reversed(list(pivot_2.columns)))
-    date_cols_desc = [d.strftime('%d/%m/%Y') for d in dates_desc]
-    today_col = latest_dt.strftime('%d/%m/%Y')
+# Tính thay đổi tuyệt đối
+pivot_2_no_total = pivot_2.drop(index='Tổng')
+pivot_2_diff = pivot_2_no_total.diff(axis=1)
+pivot_2_diff = pd.concat([pivot_2_diff, pd.DataFrame(index=['Tổng'], columns=pivot_2_diff.columns)])
 
-    # Đưa index ra cột
-    df_disp.index.name = 'Khách hàng'
-    df_disp = df_disp.reset_index()
-    df_disp = df_disp[['Khách hàng'] + date_cols_desc + ['_today_change']]
+# Tạo cột xen kẽ: giá trị + thay đổi tuyệt đối
+merged_cols = []
+for col in pivot_2.columns:
+    col_str = col.strftime('%d/%m/%Y')
+    merged_cols.append(col_str)
+    if col != pivot_2.columns[0]:
+        merged_cols.append(f'{col_str} (thay đổi)')
 
-    # Renderer DOM: 2 dòng trong 1 ô
-    js_today_renderer = JsCode("""
+# Tạo DataFrame kết hợp
+pivot_2_combined = pd.DataFrame(index=pivot_2.index, columns=merged_cols)
+
+for col in pivot_2.columns:
+    col_str = col.strftime('%d/%m/%Y')
+    pivot_2_combined[col_str] = pivot_2[col]
+    if col != pivot_2.columns[0]:
+        diff_series = pivot_2_diff[col].apply(lambda x: f"+{x:,.0f}" if x > 0 else (f"{x:,.0f}" if x < 0 else ""))
+        pivot_2_combined[f'{col_str} (thay đổi)'] = diff_series
+
+# Đảo ngược thứ tự ngày
+sorted_dates = sorted(pivot_2.columns, reverse=True)
+final_col_order = []
+for col in sorted_dates:
+    col_str = col.strftime('%d/%m/%Y')
+    final_col_order.append(col_str)
+    diff_col = f'{col_str} (thay đổi)'
+    if diff_col in pivot_2_combined.columns:
+        final_col_order.append(diff_col)
+
+pivot_2_combined = pivot_2_combined[final_col_order]
+
+st.header('💰 Lãi vay theo ngày')
+
+pivot_2_combined = pivot_2_combined.copy()
+pivot_2_combined['khach_hang'] = pivot_2_combined.index
+pivot_2_combined = pivot_2_combined.reset_index(drop=True)
+
+# Tạo GridOptionsBuilder
+gb = GridOptionsBuilder.from_dataframe(pivot_2_combined)
+
+# 👇 Căn trái + tự động cao dòng nếu wrapText
+gb.configure_default_column(
+    cellStyle={'textAlign': 'left', 'whiteSpace': 'normal'},
+    resizable=True,
+    wrapText=True,
+    autoHeight=True,
+)
+
+# ✅ Định nghĩa các JS để ẩn số 0 và highlight màu
+js_zero_to_empty = JsCode("""
     function(params) {
-      var container = document.createElement('div');
-      container.style.textAlign = 'right';
-      container.style.lineHeight = '1.2';
-
-      // Dòng 1: giá trị hôm nay
-      var vr = params.value;
-      var v = (vr===null||vr===undefined||vr==='') ? null : Number(String(vr).replace(/,/g,''));
-      if (v !== null && !isNaN(v) && v !== 0) {
-        var top = document.createElement('div');
-        top.textContent = v.toLocaleString('vi-VN');
-        container.appendChild(top);
-      }
-
-      // Dòng 2: thay đổi so với ngày trước (±, màu)
-      var cr = (params.data && params.data._today_change!=null) ? params.data._today_change : 0;
-      var d = Number(String(cr).replace(/,/g,''));
-      if (!isNaN(d) && d !== 0) {
-        var sub = document.createElement('div');
-        sub.style.fontSize = '12px';
-        sub.style.color = (d > 0 ? 'green' : 'red');
-        var sign = d > 0 ? '+' : '';
-        sub.textContent = sign + Math.abs(d).toLocaleString('vi-VN');
-        container.appendChild(sub);
-      }
-
-      return container;
+        if (params.value === 0 || params.value === null || params.value === undefined) {
+            return '';
+        }
+        return params.value.toLocaleString();
     }
-    """)
+""")
 
-    gb3 = GridOptionsBuilder.from_dataframe(df_disp)
-    gb3.configure_default_column(
-        resizable=True,
-        headerClass='centered',
-        cellStyle={'textAlign': 'right', 'whiteSpace': 'normal'},
-        wrapText=True,
-        autoHeight=True,
-    )
-    gb3.configure_column('Khách hàng', pinned='left', min_width=180,
-                         cellStyle={'textAlign':'center'}, headerClass='centered')
+js_highlight = JsCode("""
+    function(params) {
+        if (params.value == null || params.value === '') return {};
+        let v = params.value;
+        if (typeof v === 'string') {
+            v = parseFloat(v.replace(/,/g, '').replace('+', ''));
+        }
+        if (v > 0) return { color: 'green' };
+        else if (v < 0) return { color: 'red' };
+        return {};
+    }
+""")
 
-    # Ẩn cột phụ
-    gb3.configure_column('_today_change', hide=True)
+# ✅ Cấu hình từng cột
+for col in pivot_2_combined.columns:
+    if col == 'khach_hang':
+        gb.configure_column(col, pinned='left', min_width=180)
+    elif '(thay đổi)' in col:
+        gb.configure_column(col, cellRenderer=js_zero_to_empty, cellStyle=js_highlight, min_width=120)
+    else:
+        gb.configure_column(col, cellRenderer=js_zero_to_empty, min_width=90)
 
-    # Cột hôm nay: dùng renderer DOM 2 dòng
-    gb3.configure_column(today_col, cellRenderer=js_today_renderer,
-                         min_width=120, headerClass='centered')
+# Build grid config
+gridOptions = gb.build()
 
-    # Các ngày khác: hiển thị số bình thường
-    for col in date_cols_desc:
-        if col == today_col:
-            continue
-        gb3.configure_column(col, cellRenderer=js_number_right,
-                             min_width=110, headerClass='centered')
+row_height = 31
+num_rows = len(pivot_2_combined)
+table_height = row_height * num_rows -40
 
-    AgGrid(
-        df_disp,
-        gridOptions=gb3.build(),
-        custom_css=custom_css,
-        height=620,
-        fit_columns_on_grid_load=False,
-        theme='streamlit',
-        allow_unsafe_jscode=True
-    )
+
+# ✅ Hiển thị AgGrid
+AgGrid(
+    pivot_2_combined,
+    gridOptions=gridOptions,
+    height=table_height,
+    fit_columns_on_grid_load=False,  # Không auto-fit toàn bảng để giữ min_width
+    allow_unsafe_jscode=True
+) 
 
 st.markdown("<br>", unsafe_allow_html=True)
 
