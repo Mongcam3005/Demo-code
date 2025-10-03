@@ -289,7 +289,7 @@ AgGrid(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 3. LÃI VAY THEO NGÀY (có cột "thay đổi")
+# 3. LÃI VAY THEO NGÀY (gộp "thay đổi" vào cột hôm nay)
 # ===========================
 st.header('💰 Lãi vay theo ngày')
 
@@ -299,6 +299,7 @@ from NAV_batch
 '''
 lai_ngay = conn.execute(query3).fetchdf()
 
+# Pivot ASC để tính diff đúng theo ngày liền trước
 pivot_2 = pd.pivot_table(
     lai_ngay,
     values='lai_vay_ngay',
@@ -306,56 +307,91 @@ pivot_2 = pd.pivot_table(
     columns='ngay',
     aggfunc='sum',
     fill_value=0
-).sort_index(axis=1)  # thời gian tăng dần để tính diff
+).sort_index(axis=1)
 
-diff_2 = pivot_2.diff(axis=1)
+# Xác định "hôm nay" (ngày mới nhất) & ngày liền trước
+if len(pivot_2.columns) == 0:
+    st.info("Chưa có dữ liệu lãi vay.")
+else:
+    latest_dt = pivot_2.columns[-1]
+    prev_dt   = pivot_2.columns[-2] if len(pivot_2.columns) > 1 else None
 
-# Tạo bảng hiển thị: NGÀY MỚI -> CŨ, chèn cột "(thay đổi)" sau mỗi ngày (trừ ngày cổ nhất)
-dates_asc  = list(pivot_2.columns)           # cũ -> mới
-dates_desc = list(reversed(dates_asc))       # mới -> cũ
+    # Dataframe hiển thị: đổi tên cột datetime -> dd/mm/YYYY
+    rename_map = {d: d.strftime('%d/%m/%Y') for d in pivot_2.columns}
+    df_disp = pivot_2.rename(columns=rename_map).copy()
 
-cols_out = []
-for d in dates_desc:
-    ds = d.strftime('%d/%m/%Y')
-    cols_out.append(ds)
-    if d != dates_asc[0]:
-        cols_out.append(f'{ds} (thay đổi)')
-
-pivot_2_combined = pd.DataFrame(index=pivot_2.index, columns=cols_out)
-for d in dates_desc:
-    ds = d.strftime('%d/%m/%Y')
-    pivot_2_combined[ds] = pivot_2[d]
-    if d != dates_asc[0]:
-        pivot_2_combined[f'{ds} (thay đổi)'] = diff_2[d]
-
-# Đưa index ra cột chính xác tên "Khách hàng"
-pivot_2_combined.index.name = 'Khách hàng'
-pivot_2_combined = pivot_2_combined.reset_index()
-
-gb3 = GridOptionsBuilder.from_dataframe(pivot_2_combined)
-gb3.configure_default_column(resizable=True, headerClass='centered',
-                             cellStyle={'textAlign': 'right'})   # mặc định: số căn phải
-gb3.configure_column('Khách hàng', pinned='left', min_width=180,
-                     cellStyle={'textAlign':'center'}, headerClass='centered')
-
-for col in pivot_2_combined.columns:
-    if col == 'Khách hàng':
-        continue
-    if '(thay đổi)' in col:
-        gb3.configure_column(col, valueFormatter=js_change_valuefmt,
-                             cellStyle=js_change_style, min_width=120, headerClass='centered')
+    # Cột phụ: thay đổi so với ngày liền trước (chỉ dùng cho render)
+    if prev_dt is not None:
+        df_disp['_today_change'] = (pivot_2[latest_dt] - pivot_2[prev_dt]).values
     else:
-        gb3.configure_column(col, cellRenderer=js_number_right, min_width=110, headerClass='centered')
+        df_disp['_today_change'] = 0
 
-AgGrid(
-    pivot_2_combined,
-    gridOptions=gb3.build(),
-    custom_css=custom_css,
-    height=620,
-    fit_columns_on_grid_load=False,
-    theme='streamlit',
-    allow_unsafe_jscode=True
-)
+    # Thứ tự cột: hôm nay trước, sau đó các ngày còn lại (mới -> cũ)
+    dates_desc = list(reversed(list(pivot_2.columns)))
+    date_cols_desc = [d.strftime('%d/%m/%Y') for d in dates_desc]
+    today_col = latest_dt.strftime('%d/%m/%Y')
+
+    # Đưa index ra cột "Khách hàng"
+    df_disp.index.name = 'Khách hàng'
+    df_disp = df_disp.reset_index()
+
+    # Sắp xếp cột
+    df_disp = df_disp[['Khách hàng'] + date_cols_desc + ['_today_change']]
+
+    # Renderer: hiển thị giá trị + dòng thay đổi (màu & dấu) ngay dưới cột hôm nay
+    js_today_renderer = JsCode("""
+    function(params) {
+        // giá trị hôm nay
+        var vRaw = params.value;
+        var v = (vRaw===null||vRaw===undefined||vRaw==='') ? null : Number(String(vRaw).replace(/,/g,''));
+        var top = (v===null || isNaN(v) || v===0) ? '' : v.toLocaleString('vi-VN');
+
+        // thay đổi so với ngày trước
+        var chRaw = params.data ? params.data['_today_change'] : 0;
+        var d = Number(String(chRaw).replace(/,/g,''));
+        var sub = '';
+        if (!isNaN(d) && d !== 0) {
+            var color = d>0 ? 'green' : 'red';
+            var sign  = d>0 ? '+' : '';
+            sub = `<div style="font-size:12px; color:${color};">${sign}${Math.abs(d).toLocaleString('vi-VN')}</div>`;
+        }
+        return `<div style="text-align:right; line-height:1.2">${top}${sub}</div>`;
+    }
+    """)
+
+    # Cấu hình lưới
+    gb3 = GridOptionsBuilder.from_dataframe(df_disp)
+    gb3.configure_default_column(
+        resizable=True,
+        headerClass='centered',
+        cellStyle={'textAlign': 'right', 'whiteSpace': 'normal'},
+        wrapText=True,
+        autoHeight=True,
+    )
+    gb3.configure_column('Khách hàng', pinned='left', min_width=180,
+                         cellStyle={'textAlign':'center'}, headerClass='centered')
+
+    # Ẩn cột phụ
+    gb3.configure_column('_today_change', hide=True)
+
+    # Cột hôm nay = renderer 2 dòng; các ngày khác chỉ là số
+    for col in date_cols_desc:
+        if col == today_col:
+            gb3.configure_column(col, cellRenderer=js_today_renderer,
+                                 min_width=120, headerClass='centered')
+        else:
+            gb3.configure_column(col, cellRenderer=js_number_right,
+                                 min_width=110, headerClass='centered')
+
+    AgGrid(
+        df_disp,
+        gridOptions=gb3.build(),
+        custom_css=custom_css,
+        height=620,
+        fit_columns_on_grid_load=False,
+        theme='streamlit',
+        allow_unsafe_jscode=True
+    )
 
 st.markdown("<br>", unsafe_allow_html=True)
 
