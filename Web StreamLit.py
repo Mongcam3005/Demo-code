@@ -289,7 +289,7 @@ AgGrid(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 3. LÃI VAY THEO NGÀY (gộp "thay đổi" vào cột hôm nay)
+# 3. LÃI VAY THEO NGÀY (gộp "thay đổi" vào cột hôm nay) – FIX: render HTML
 # ===========================
 st.header('💰 Lãi vay theo ngày')
 
@@ -299,7 +299,6 @@ from NAV_batch
 '''
 lai_ngay = conn.execute(query3).fetchdf()
 
-# Pivot ASC để tính diff đúng theo ngày liền trước
 pivot_2 = pd.pivot_table(
     lai_ngay,
     values='lai_vay_ngay',
@@ -309,57 +308,50 @@ pivot_2 = pd.pivot_table(
     fill_value=0
 ).sort_index(axis=1)
 
-# Xác định "hôm nay" (ngày mới nhất) & ngày liền trước
 if len(pivot_2.columns) == 0:
     st.info("Chưa có dữ liệu lãi vay.")
 else:
     latest_dt = pivot_2.columns[-1]
     prev_dt   = pivot_2.columns[-2] if len(pivot_2.columns) > 1 else None
 
-    # Dataframe hiển thị: đổi tên cột datetime -> dd/mm/YYYY
     rename_map = {d: d.strftime('%d/%m/%Y') for d in pivot_2.columns}
     df_disp = pivot_2.rename(columns=rename_map).copy()
 
-    # Cột phụ: thay đổi so với ngày liền trước (chỉ dùng cho render)
     if prev_dt is not None:
         df_disp['_today_change'] = (pivot_2[latest_dt] - pivot_2[prev_dt]).values
     else:
         df_disp['_today_change'] = 0
 
-    # Thứ tự cột: hôm nay trước, sau đó các ngày còn lại (mới -> cũ)
     dates_desc = list(reversed(list(pivot_2.columns)))
     date_cols_desc = [d.strftime('%d/%m/%Y') for d in dates_desc]
     today_col = latest_dt.strftime('%d/%m/%Y')
 
-    # Đưa index ra cột "Khách hàng"
     df_disp.index.name = 'Khách hàng'
     df_disp = df_disp.reset_index()
-
-    # Sắp xếp cột
     df_disp = df_disp[['Khách hàng'] + date_cols_desc + ['_today_change']]
 
-    # Renderer: hiển thị giá trị + dòng thay đổi (màu & dấu) ngay dưới cột hôm nay
+    # Renderer: 2 dòng trong cùng 1 ô (HTML)
     js_today_renderer = JsCode("""
     function(params) {
-        // giá trị hôm nay
-        var vRaw = params.value;
-        var v = (vRaw===null||vRaw===undefined||vRaw==='') ? null : Number(String(vRaw).replace(/,/g,''));
-        var top = (v===null || isNaN(v) || v===0) ? '' : v.toLocaleString('vi-VN');
+      // Giá trị hôm nay (dòng 1)
+      var vr = params.value;
+      var v = (vr===null||vr===undefined||vr==='') ? null : Number(String(vr).replace(/,/g,''));
+      var top = (v===null || isNaN(v) || v===0) ? '' : v.toLocaleString('vi-VN');
 
-        // thay đổi so với ngày trước
-        var chRaw = params.data ? params.data['_today_change'] : 0;
-        var d = Number(String(chRaw).replace(/,/g,''));
-        var sub = '';
-        if (!isNaN(d) && d !== 0) {
-            var color = d>0 ? 'green' : 'red';
-            var sign  = d>0 ? '+' : '';
-            sub = `<div style="font-size:12px; color:${color};">${sign}${Math.abs(d).toLocaleString('vi-VN')}</div>`;
-        }
-        return `<div style="text-align:right; line-height:1.2">${top}${sub}</div>`;
+      // Thay đổi so với ngày trước (dòng 2)
+      var cr = params.data ? params.data['_today_change'] : 0;
+      var d = Number(String(cr).replace(/,/g,''));
+      var sub = '';
+      if (!isNaN(d) && d !== 0) {
+        var color = d>0 ? 'green' : 'red';
+        var sign  = d>0 ? '+' : '';
+        sub = '<div style="font-size:12px; color:'+color+';">'+sign+Math.abs(d).toLocaleString('vi-VN')+'</div>';
+      }
+      // Trả về HTML
+      return '<div style="text-align:right; line-height:1.2">'+top+sub+'</div>';
     }
     """)
 
-    # Cấu hình lưới
     gb3 = GridOptionsBuilder.from_dataframe(df_disp)
     gb3.configure_default_column(
         resizable=True,
@@ -371,17 +363,27 @@ else:
     gb3.configure_column('Khách hàng', pinned='left', min_width=180,
                          cellStyle={'textAlign':'center'}, headerClass='centered')
 
+    # ⭐ Quan trọng: bật render HTML (không escape)
+    gb3.configure_grid_options(suppressHtmlEscaping=True)
+
     # Ẩn cột phụ
     gb3.configure_column('_today_change', hide=True)
 
-    # Cột hôm nay = renderer 2 dòng; các ngày khác chỉ là số
+    # Cột hôm nay: dùng renderer 2 dòng + KHÔNG escape HTML
+    gb3.configure_column(
+        today_col,
+        cellRenderer=js_today_renderer,
+        cellRendererParams={'suppressHtmlEscaping': True},
+        min_width=120,
+        headerClass='centered'
+    )
+
+    # Các ngày khác: chỉ số (căn phải)
     for col in date_cols_desc:
         if col == today_col:
-            gb3.configure_column(col, cellRenderer=js_today_renderer,
-                                 min_width=120, headerClass='centered')
-        else:
-            gb3.configure_column(col, cellRenderer=js_number_right,
-                                 min_width=110, headerClass='centered')
+            continue
+        gb3.configure_column(col, cellRenderer=js_number_right,
+                             min_width=110, headerClass='centered')
 
     AgGrid(
         df_disp,
