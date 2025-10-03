@@ -192,7 +192,7 @@ AgGrid(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 2. SỐ LƯỢNG MUA (Tổng ở cuối theo CỘT)
+# 2. SỐ LƯỢNG MUA (Tổng ở cuối theo CỘT) + HEATMAP
 # ===========================
 query2 = '''
 select khach_hang, ma, so_luong_mua
@@ -224,16 +224,54 @@ pivot_ag = pivot.reset_index()
 if 'index' in pivot_ag.columns and 'Khách hàng' in pivot_ag.columns:
     pivot_ag = pivot_ag.drop(columns=['index'])
 
+# ==== TÍNH MAX MỖI CỘT (bỏ hàng 'Tổng') để scale màu ====
+value_cols = [c for c in pivot_ag.columns if c != 'Khách hàng']
+tmp = pivot_ag[pivot_ag['Khách hàng'] != 'Tổng']
+col_max = {}
+for c in value_cols:
+    m = pd.to_numeric(tmp[c], errors='coerce').max()
+    col_max[c] = 1 if pd.isna(m) or m <= 0 else float(m)
+
 st.header('🛒 Số lượng mua')
 
 gb2 = GridOptionsBuilder.from_dataframe(pivot_ag)
-gb2.configure_default_column(resizable=True, headerClass='centered',
-                             cellStyle={'textAlign': 'right'})
+gb2.configure_default_column(resizable=True, headerClass='centered')
 gb2.configure_column('Khách hàng', pinned='left', min_width=180,
                      cellStyle={'textAlign':'center'}, headerClass='centered')
-for c in pivot_ag.columns:
-    if c != 'Khách hàng':
-        gb2.configure_column(c, cellRenderer=js_number_right, min_width=90, headerClass='centered')
+
+# ==== cấu hình từng cột số: render số (căn phải) + heatmap nền ====
+for c in value_cols:
+    max_val = col_max[c]
+    heat_js = JsCode(f"""
+        function(params) {{
+            // Không tô màu cho dòng Tổng
+            if (params.data && params.data['Khách hàng'] === 'Tổng') {{
+                return {{textAlign:'right', fontWeight:'600', backgroundColor:'#f5f5f5'}};
+            }}
+            var raw = params.value;
+            if (raw === null || raw === undefined || raw === '' || raw === 0) {{
+                return {{textAlign:'right'}};
+            }}
+            var v = Number(String(raw).replace(/,/g,''));
+            if (isNaN(v) || v <= 0) return {{textAlign:'right'}};
+
+            // Chuẩn hoá 0..1 theo MAX của cột
+            var r = Math.min(1, v/{max_val});
+
+            // Màu xanh đậm dần theo r (HSL: hue=210, sat=80%, lightness 92% -> 52%)
+            var light = 92 - 40*r;
+            var bg = 'hsl(210, 80%,' + light.toFixed(1) + '%)';
+
+            return {{ backgroundColor: bg, textAlign:'right' }};
+        }}
+    """)
+    gb2.configure_column(
+        c,
+        cellRenderer=js_number_right,   # format nghìn + căn phải
+        cellStyle=heat_js,
+        min_width=90,
+        headerClass='centered'
+    )
 
 AgGrid(
     pivot_ag,
