@@ -192,7 +192,7 @@ AgGrid(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ===========================
-# 2. SỐ LƯỢNG MUA (Tổng ở cuối theo CỘT) + HEATMAP
+# 2. SỐ LƯỢNG MUA (Tổng ở cuối theo CỘT) + HEATMAP + SẮP XẾP CỘT THEO TỔNG GIẢM DẦN
 # ===========================
 query2 = '''
 select khach_hang, ma, so_luong_mua
@@ -215,6 +215,10 @@ pivot = pd.pivot_table(
 
 # Thêm dòng Tổng theo CỘT ở CUỐI
 pivot.loc['Tổng'] = pivot.sum(axis=0)
+
+# 👉 SẮP XẾP CỘT: tổng lớn nhất nằm bên trái
+sorted_cols = pivot.loc['Tổng'].sort_values(ascending=False).index.tolist()
+pivot = pivot[sorted_cols]
 
 # Đặt tên index trước khi reset_index để KHÔNG sinh cột 'index'
 pivot.index.name = 'Khách hàng'
