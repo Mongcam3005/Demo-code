@@ -239,14 +239,14 @@ gb2.configure_default_column(resizable=True, headerClass='centered')
 gb2.configure_column('Khách hàng', pinned='left', min_width=180,
                      cellStyle={'textAlign':'center'}, headerClass='centered')
 
-# ==== cấu hình từng cột số: render số (căn phải) + heatmap nền ====
+# ==== cấu hình từng cột số: render số (căn phải) + heatmap nền xanh lá ====
 for c in value_cols:
     max_val = col_max[c]
     heat_js = JsCode(f"""
         function(params) {{
             // Không tô màu cho dòng Tổng
             if (params.data && params.data['Khách hàng'] === 'Tổng') {{
-                return {{textAlign:'right', fontWeight:'600', backgroundColor:'#f5f5f5'}};
+                return {{textAlign:'right', fontWeight:'600', backgroundColor:'#f2f2f2'}};
             }}
             var raw = params.value;
             if (raw === null || raw === undefined || raw === '' || raw === 0) {{
@@ -258,11 +258,14 @@ for c in value_cols:
             // Chuẩn hoá 0..1 theo MAX của cột
             var r = Math.min(1, v/{max_val});
 
-            // Màu xanh đậm dần theo r (HSL: hue=210, sat=80%, lightness 92% -> 52%)
-            var light = 92 - 40*r;
-            var bg = 'hsl(210, 80%,' + light.toFixed(1) + '%)';
+            // 🎨 Xanh lá: H=140°, S=75%, Lightness 96% (nhạt) -> 35% (đậm)
+            var light = 96 - 61*r;                      // 96 → 35
+            var bg = 'hsl(140, 75%,' + light.toFixed(1) + '%)';
 
-            return {{ backgroundColor: bg, textAlign:'right' }};
+            // Chữ trắng khi nền đậm, chữ đen khi nền nhạt
+            var fg = (light < 55) ? 'white' : 'black';
+
+            return {{ backgroundColor: bg, color: fg, textAlign:'right' }};
         }}
     """)
     gb2.configure_column(
